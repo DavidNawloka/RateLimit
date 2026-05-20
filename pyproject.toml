@@ -1,7 +1,7 @@
 [project]
 name = "ratelimit"
 version = "0.1.0"
-description = "Add your description here"
+description = "Rate limiting API"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.136.1",
