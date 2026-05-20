@@ -19,6 +19,10 @@ async def root():
     return {"message": "Hello World"}
 
 
-@app.get("/hello/{name}")
-async def say_hello(name: str):
-    return {"message": f"Hello {name}"}
+@app.get("/search")
+async def search(query: str = ""):
+    return {"query": query, "results": []}
+
+@app.post("/login")
+async def login():
+    return {"status": "ok"}
