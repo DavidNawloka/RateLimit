@@ -8,6 +8,10 @@ from .limiter import TokenBucketLimiter
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Token-bucket rate limiting requests per client key.
+
+    Per-path limiters can be used, else the default limiter is used.
+    """
     def __init__(
             self,
             app,
@@ -29,18 +33,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         limiter = self._per_path.get(request.url.path, self._default)
         key = self._client_key(request)
 
-        allowed, retry_after, remaining = limiter.allow(key)
+        decision = limiter.allow(key)
 
-        if not allowed:
+        if not decision.allowed:
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Rate limit exceeded"},
                 headers={
-                    "Retry-After": str(max(1, ceil(retry_after))),
+                    "Retry-After": str(max(1, ceil(decision.retry_after))),
                     "X-RateLimit-Limit": str(limiter.capacity),
                     "X-RateLimit-Remaining": "0",
                 })
+
         response = await call_next(request)
         response.headers["X-RateLimit-Limit"] = str(limiter.capacity)
-        response.headers["X-RateLimit-Remaining"] = str(remaining)
+        response.headers["X-RateLimit-Remaining"] = str(decision.remaining_tokens)
+        reset_seconds = int((limiter.capacity - decision.remaining_tokens) / limiter.refill_rate)
+        response.headers["X-RateLimit-Reset"] = str(reset_seconds) # seconds until bucket is full again
         return response

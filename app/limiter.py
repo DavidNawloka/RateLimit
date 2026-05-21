@@ -9,7 +9,18 @@ class _Bucket:
     tokens: float
     updated_at: float
 
+@dataclass(frozen=True)
+class Decision:
+    allowed: bool
+    retry_after: float
+    remaining_tokens: int
+
 class TokenBucketLimiter:
+    """Token bucket rate limiter
+
+    Allows request bursts up to 'capacity' and refills at 'refill_rate' tokens/sec.
+    In-memory/thread-safe
+    """
     def __init__(
             self,
             capacity: int,
@@ -24,7 +35,11 @@ class TokenBucketLimiter:
         self._buckets: dict[str, _Bucket] = {}
         self._lock = Lock()
 
-    def allow(self, key: str) -> tuple[bool, float, int]:
+    def allow(self, key: str) -> Decision:
+        """Tries to consume one token for 'key' (client identification) if still available
+
+        If allowed 'retry_after' in return type will be 0 else seconds until next token available
+        """
         with self._lock:
             now = self._clock()
             bucket = self._buckets.get(key)
@@ -33,7 +48,7 @@ class TokenBucketLimiter:
                 bucket = _Bucket(tokens=float(self.capacity), updated_at=now)
                 self._buckets[key] = bucket
             else:
-                elapsed = now - bucket.updated_at
+                elapsed = max(0.0, now - bucket.updated_at) # as clock is injectable, protects against clock problems
                 bucket.tokens = min(
                     float(self.capacity),
                     bucket.tokens + self.refill_rate * elapsed
@@ -42,7 +57,7 @@ class TokenBucketLimiter:
 
             if bucket.tokens >= 1:
                 bucket.tokens -= 1
-                return True, 0.0, int(bucket.tokens)
+                return Decision(True, 0.0, int(bucket.tokens))
 
             retry_after = (1 - bucket.tokens) / self.refill_rate
-            return False, retry_after, int(bucket.tokens)
+            return Decision(False, retry_after, int(bucket.tokens))
