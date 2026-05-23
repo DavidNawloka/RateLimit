@@ -1,4 +1,4 @@
-from app.limiter import TokenBucketLimiter
+from app.limiter import TokenBucketLimiter, SweepConfig
 import pytest
 
 class FakeClock:
@@ -69,3 +69,27 @@ def test_invalid_clock():
 def test_invalid_constructor_args(capacity, refill_rate):
     with pytest.raises(ValueError):
         TokenBucketLimiter(capacity, refill_rate)
+
+def test_idle_buckets_are_swept():
+    clock = FakeClock()
+    limiter = TokenBucketLimiter(
+        capacity=2, refill_rate=1.0, clock=clock,
+        sweep_config=SweepConfig(min_size=1, call_interval=1),
+    )
+    for i in range(5):
+        limiter.allow(f"client-{i}")
+    clock.tick(10.0)
+    limiter.allow("trigger-sweep")
+    assert set(limiter._buckets.keys()) == {"trigger-sweep"} # makes sure every other bucket has been cleared
+
+
+def test_partially_refilled_bucket_not_swept_with_slow_refill():
+    clock = FakeClock()
+    limiter = TokenBucketLimiter(
+        capacity=10, refill_rate=0.1, clock=clock,
+        sweep_config=SweepConfig(min_size=1, call_interval=1),
+    )
+    limiter.allow("a")
+    clock.tick(5.0)
+    limiter.allow("b")  # triggers sweep
+    assert "a" in limiter._buckets  # a should still be tracked

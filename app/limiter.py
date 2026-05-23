@@ -15,6 +15,11 @@ class Decision:
     retry_after: float
     remaining_tokens: int
 
+@dataclass(frozen=True)
+class SweepConfig:
+    min_size: int = 1024 # minimum dict size for sweeping
+    call_interval: int = 1024 # minimum calls between sweep attempts
+
 class TokenBucketLimiter:
     """Token bucket rate limiter
 
@@ -26,6 +31,7 @@ class TokenBucketLimiter:
             capacity: int,
             refill_rate: float,
             clock: Callable[[], float] = monotonic,
+            sweep_config: SweepConfig = SweepConfig()
     ) -> None:
         if capacity <= 0 or refill_rate <= 0:
             raise ValueError("Capacity and Refill Rate must be positive")
@@ -34,6 +40,8 @@ class TokenBucketLimiter:
         self._clock = clock
         self._buckets: dict[str, _Bucket] = {}
         self._lock = Lock()
+        self._sweep_config = sweep_config
+        self._calls_since_sweep = 0
 
     def allow(self, key: str) -> Decision:
         """Tries to consume one token for 'key' (client identification) if still available
@@ -41,6 +49,7 @@ class TokenBucketLimiter:
         If allowed 'retry_after' in return type will be 0 else seconds until next token available
         """
         with self._lock:
+            self._sweep()
             now = self._clock()
             bucket = self._buckets.get(key)
 
@@ -61,3 +70,17 @@ class TokenBucketLimiter:
 
             retry_after = (1 - bucket.tokens) / self.refill_rate
             return Decision(False, retry_after, int(bucket.tokens))
+
+    def _sweep(self) -> None:
+        self._calls_since_sweep += 1
+        if self._calls_since_sweep < self._sweep_config.call_interval or len(self._buckets) < self._sweep_config.min_size:
+            return
+
+        new_dict = {}
+        now = self._clock()
+        for key, bucket in self._buckets.items():
+            if bucket.tokens + (now - bucket.updated_at) * self.refill_rate < self.capacity:
+                new_dict[key] = bucket
+
+        self._buckets = new_dict
+
